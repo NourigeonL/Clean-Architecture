@@ -10,9 +10,9 @@ from dataclasses import dataclass
 # Errors
 
 class InvalidDomainError(Exception):
-  def __init__(self, message : int, *args: object) -> None:
+  def __init__(self, message : str, quantity : int, *args: object) -> None:
     self.message = message
-    super().__init__(*args)
+    self.quantity = quantity
 
 class InvalidOperationError(Exception):
   def __init__(self, message : int, *args: object) -> None:
@@ -150,9 +150,11 @@ class WarehouseProduct:
   def get_events(self) -> List[IEvent]:
     return self.__events
 
+
+
   def ship_product(self, quantity : int) -> None:
     if quantity > self.__current_state.quantity_on_hand:
-      raise InvalidDomainError(message = "Ah... we don't have enough product to ship?")
+      raise InvalidDomainError(message = "Ah... we don't have enough product to ship?", quantity = quantity)
 
     self.add_event(ProductShipped(self.sku, quantity, datetime.now()))
 
@@ -221,6 +223,8 @@ class Product:
   sku : str
   received : int = 0
   shipped : int = 0
+  stored : int = 0
+  number_of_time_inventory_adjusted : int = 0
 
 T = TypeVar('T')
 
@@ -259,11 +263,19 @@ class ProductRepository(ISubscriber):
   def _(self, event : ProductShipped) -> None:
     product = self.get_product(event.sku)
     product.shipped += event.quantity
+    product.stored -= event.quantity
 
   @__apply.register
   def _(self, event : ProductReceived) -> None:
     product = self.get_product(event.sku)
     product.received += event.quantity
+    product.stored += event.quantity
+
+  @__apply.register
+  def _(self, event : InventoryAdjusted) -> None:
+    product = self.get_product(event.sku)
+    product.stored += event.quantity
+    product.number_of_time_inventory_adjusted += 1
 
   @property
   def products(self):
@@ -321,7 +333,7 @@ def main():
     if key == "AP":
       products = product_repository.get_all_products()
       for product in products:
-        print(f"{product.sku} Received: {product.received}, Shipped: {product.shipped}")
+        print(f"{product.sku} Received: {product.received}, Shipped: {product.shipped}, Stored: {product.stored}, Inventory Adjusted: {product.number_of_time_inventory_adjusted} time(s)")
       input("> OK")
       continue
     sku = get_sku()
@@ -340,6 +352,7 @@ def main():
           print(f"{sku} Shipped : {quantity}")
         except InvalidDomainError as e:
           print(e.message)
+          print(f"Tried to send {e.quantity} of {sku}")
 
     elif key == "A":
       quantity, is_valid = get_quantity()
@@ -351,6 +364,7 @@ def main():
           print(f"{sku} Adjusted: {quantity} {reason}")
         except InvalidDomainError as e:
           print(e.message)
+          print(f"Tried to adjust {e.quantity} of {sku}")
 
     elif key == "Q":
       current_quantity_on_hand = warehouse_product.quantity_on_hand
@@ -371,7 +385,7 @@ def main():
 
     elif key == "P":
       product = product_repository.get_product(sku)
-      print(f"{product.sku} Received: {product.received}, Shipped: {product.shipped}")
+      print(f"{product.sku} Received: {product.received}, Shipped: {product.shipped}, Stored: {product.stored}, Inventory Adjusted: {product.number_of_time_inventory_adjusted} time(s)")
     warehouse_product_repository.save(warehouse_product)
     input("> OK")
 
