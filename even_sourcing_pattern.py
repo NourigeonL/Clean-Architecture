@@ -117,6 +117,7 @@ class WarehouseProduct:
     quantity_on_hand : int = 0
     registeration_date : datetime | None = None
     sku : str = ""
+    version : int = 0
 
   def __init__(self) -> None:
     self.__events : List[IEvent] = []
@@ -146,6 +147,7 @@ class WarehouseProduct:
   def add_event(self, event : IEvent) -> None:
     self.__add_event(event)
     self.__events.append(event)
+    self.__current_state.version += 1
 
   def get_events(self) -> List[IEvent]:
     return self.__events
@@ -179,6 +181,10 @@ class WarehouseProduct:
   def registeration_date(self):
     return self.__current_state.registeration_date
 
+  @property
+  def version(self):
+    return self.__current_state.version
+
 
 class WarehouseProductRepository:
   """Repository interacting with an event store"""
@@ -188,12 +194,14 @@ class WarehouseProductRepository:
     self.__subscribers : List[ISubscriber] = []
 
 
-  def get(self, sku : str) -> WarehouseProduct:
+  def get(self, sku : str, version : int = 0) -> WarehouseProduct:
     """Retreives the event stream of a wharehouse product and replay its events to get its current state before returning the product"""
     warehouse_product = WarehouseProduct()
     events = self.__in_memory_streams.setdefault(sku,[ProductRegistered(sku, datetime.now())])
-    for evnt in events:
-      warehouse_product.add_event(evnt)
+    if version == 0:
+      version = len(events)
+    for i in range(version):
+      warehouse_product.add_event(events[i])
 
     return warehouse_product
 
@@ -310,6 +318,10 @@ def get_reason() -> str:
 def get_sku() -> str:
   return input("> Please enter a Sku : ")
 
+def get_verion() ->  Tuple[int, bool]:
+  version = int(input("> Please enter a version : "))
+  is_valid = version >= 0
+  return (version, is_valid)
 
 def main():
   warehouse_product_repository = WarehouseProductRepository()
@@ -325,18 +337,43 @@ def main():
     print("E: Events")
     print("P: Projection")
     print("AP: All Projections")
+    print("V: Version")
     print("X: Quit")
     key = input("> ").upper()
-    if key not in ["R","S","A", "Q", "E", "P", "AP"]:
+    if key not in ["R","S","A", "Q", "E", "P", "AP", "V"]:
       continue
     print()
     if key == "AP":
       products = product_repository.get_all_products()
       for product in products:
         print(f"{product.sku} Received: {product.received}, Shipped: {product.shipped}, Stored: {product.stored}, Inventory Adjusted: {product.number_of_time_inventory_adjusted} time(s)")
+
+
       input("> OK")
       continue
     sku = get_sku()
+
+    if key == "V":
+      version, is_valid = get_verion()
+      if is_valid:
+        warehouse_product = warehouse_product_repository.get(sku, version)
+        for event in warehouse_product.get_events():
+          match event:
+            case ProductRegistered():
+              print(f"{event.datetime} {sku} Registered")
+            case ProductReceived():
+              print(f"{event.datetime} {sku} Received: {event.quantity}")
+            case ProductShipped():
+              print(f"{event.datetime} {sku} Shipped: {event.quantity}")
+            case InventoryAdjusted():
+              print(f"{event.datetime} {sku} Adjusted: {event.quantity} {event.reason}")
+        current_quantity_on_hand = warehouse_product.quantity_on_hand
+        version = warehouse_product.version
+        print(f"{sku} Quantity On Hand: {current_quantity_on_hand}, Version: {version}")
+
+        input("> OK")
+      continue
+
     warehouse_product = warehouse_product_repository.get(sku)
 
     if key == "R":
@@ -368,7 +405,8 @@ def main():
 
     elif key == "Q":
       current_quantity_on_hand = warehouse_product.quantity_on_hand
-      print(f"{sku} Quantity On Hand: {current_quantity_on_hand}")
+      version = warehouse_product.version
+      print(f"{sku} Quantity On Hand: {current_quantity_on_hand}, Version: {version}")
 
     elif key == "E":
       print(f"{sku} Events:")
@@ -382,6 +420,8 @@ def main():
             print(f"{event.datetime} {sku} Shipped: {event.quantity}")
           case InventoryAdjusted():
             print(f"{event.datetime} {sku} Adjusted: {event.quantity} {event.reason}")
+
+
 
     elif key == "P":
       product = product_repository.get_product(sku)
